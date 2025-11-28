@@ -122,26 +122,64 @@ if (BACKEND) {
 }
 
 /* ============ Portfolio API ============ */
-// Return all portfolios
+// Optimize portfolio fetching
 app.get('/api/portfolios', (req, res) => {
-  res.json(portfolios.sort((a,b) => {
-    // verified first, then newest
-    const av = a.verified ? 1 : 0;
-    const bv = b.verified ? 1 : 0;
-    if (av !== bv) return bv - av;
-    return new Date(b.created) - new Date(a.created);
-  }));
+  res.json(portfolios.map((p) => ({
+    id: p.id,
+    name: p.name,
+    email: p.email,
+    bio: p.bio,
+    skills: p.skills,
+    profilePic: p.profilePic,
+    verified: p.verified || false,
+    created: p.created,
+  })));
 });
 
-// Create a portfolio
+// Enhanced validation for portfolio creation
 app.post('/api/portfolios', (req, res) => {
-  const body = req.body || {};
+  const { name, email, bio, skills, profilePic, services, portfolio } = req.body || {};
+
   // Basic validation
-  if (!body.name || !body.owner) return res.status(400).json({ error: 'name and owner required' });
+  if (!name || typeof name !== 'string' || name.trim().length < 2) {
+    return res.status(400).json({ error: 'Invalid name. Must be at least 2 characters.' });
+  }
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address.' });
+  }
+
+  if (!bio || typeof bio !== 'string' || bio.trim().length < 10) {
+    return res.status(400).json({ error: 'Bio must be at least 10 characters.' });
+  }
+
+  if (!skills || typeof skills !== 'string') {
+    return res.status(400).json({ error: 'Skills must be a comma-separated string.' });
+  }
+
+  if (services && !Array.isArray(services)) {
+    return res.status(400).json({ error: 'Services must be an array.' });
+  }
+
+  if (portfolio && !Array.isArray(portfolio)) {
+    return res.status(400).json({ error: 'Portfolio items must be an array.' });
+  }
 
   const id = Date.now().toString();
   const created = new Date().toISOString();
-  const newPortfolio = Object.assign({}, body, { id, created, lastModified: created });
+  const newPortfolio = {
+    id,
+    name,
+    email,
+    bio,
+    skills,
+    profilePic: profilePic || null,
+    services: services || [],
+    portfolio: portfolio || [],
+    created,
+    lastModified: created,
+  };
+
   portfolios.push(newPortfolio);
   savePortfolios(portfolios);
   res.status(201).json(newPortfolio);
@@ -278,6 +316,103 @@ app.post('/api/security/verify-fingerprint', (req, res) => {
   } else {
     res.json({ success: true, message: 'No change needed' });
   }
+});
+
+// In-memory user storage (for simplicity; replace with a database in production)
+const users = {};
+
+// Initialize admin account
+const ADMIN_USERNAME = 'mohamed';
+const ADMIN_PASSWORD = '@Simovites9';
+
+users[ADMIN_USERNAME] = {
+  username: ADMIN_USERNAME,
+  password: ADMIN_PASSWORD,
+  isAdmin: true,
+};
+
+// Middleware to check if the user is an admin
+function requireAdmin(req, res, next) {
+  const { username } = req.body || {};
+  const user = users[username];
+
+  if (!user || !user.isAdmin) {
+    return res.status(403).json({ message: 'Admin access required.' });
+  }
+
+  next();
+}
+
+// Register a new user
+app.post('/register', (req, res) => {
+  const { username, password } = req.body || {};
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required.' });
+  }
+
+  if (users[username]) {
+    return res.status(400).json({ message: 'Username already exists.' });
+  }
+
+  users[username] = { username, password }; // In production, hash the password
+  res.status(201).json({ username });
+});
+
+// Login an existing user
+app.post('/login', (req, res) => {
+  const { username, password } = req.body || {};
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required.' });
+  }
+
+  const user = users[username];
+  if (!user || user.password !== password) {
+    return res.status(401).json({ message: 'Invalid username or password.' });
+  }
+
+  res.status(200).json({ username });
+});
+
+// Admin endpoint to manage portfolios
+app.delete('/api/portfolios/:id', requireAdmin, (req, res) => {
+  const id = req.params.id;
+  const index = portfolios.findIndex((p) => p.id === id);
+
+  if (index === -1) {
+    return res.status(404).json({ message: 'Portfolio not found.' });
+  }
+
+  portfolios.splice(index, 1);
+  savePortfolios(portfolios);
+  res.status(200).json({ message: 'Portfolio deleted successfully.' });
+});
+
+app.patch('/api/portfolios/:id/verify', requireAdmin, (req, res) => {
+  const id = req.params.id;
+  const portfolio = portfolios.find((p) => p.id === id);
+
+  if (!portfolio) {
+    return res.status(404).json({ message: 'Portfolio not found.' });
+  }
+
+  portfolio.verified = true;
+  savePortfolios(portfolios);
+  res.status(200).json({ message: 'Portfolio verified successfully.' });
+});
+
+app.patch('/api/portfolios/:id/unverify', requireAdmin, (req, res) => {
+  const id = req.params.id;
+  const portfolio = portfolios.find((p) => p.id === id);
+
+  if (!portfolio) {
+    return res.status(404).json({ message: 'Portfolio not found.' });
+  }
+
+  portfolio.verified = false;
+  savePortfolios(portfolios);
+  res.status(200).json({ message: 'Portfolio unverified successfully.' });
 });
 
 // Fallback - serve index.html for all other routes
